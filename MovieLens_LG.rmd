@@ -1,0 +1,169 @@
+---
+title: "MovieLens Recommendation System"
+author: "Loren Grooms"
+date: "01/07/2020"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+#START OF PROVIDED CODE
+
+if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+if(!require(caret)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(data.table)) install.packages("data.table", repos = "http://cran.us.r-project.org")
+
+library(tidyverse)
+library(caret)
+library(data.table)
+
+# MovieLens 10M dataset:
+# https://grouplens.org/datasets/movielens/10m/
+# http://files.grouplens.org/datasets/movielens/ml-10m.zip
+
+dl <- tempfile()
+download.file("http://files.grouplens.org/datasets/movielens/ml-10m.zip", dl)
+
+ratings <- fread(text = gsub("::", "\t", readLines(unzip(dl, "ml-10M100K/ratings.dat"))),
+                 col.names = c("userId", "movieId", "rating", "timestamp"))
+
+movies <- str_split_fixed(readLines(unzip(dl, "ml-10M100K/movies.dat")), "\\::", 3)
+colnames(movies) <- c("movieId", "title", "genres")
+
+# if using R 4.0 or later:
+movies <- as.data.frame(movies) %>% mutate(movieId = as.numeric(movieId),
+                                            title = as.character(title),
+                                            genres = as.character(genres))
+
+
+movielens <- left_join(ratings, movies, by = "movieId")
+
+# Validation set will be 10% of MovieLens data
+set.seed(1, sample.kind="Rounding") # if using R 3.5 or earlier, use `set.seed(1)`
+test_index <- createDataPartition(y = movielens$rating, times = 1, p = 0.1, list = FALSE)
+edx <- movielens[-test_index,]
+temp <- movielens[test_index,]
+
+# Make sure userId and movieId in validation set are also in edx set
+validation <- temp %>% 
+      semi_join(edx, by = "movieId") %>%
+      semi_join(edx, by = "userId")
+
+# Add rows removed from validation set back into edx set
+removed <- anti_join(temp, validation)
+edx <- rbind(edx, removed)
+
+# END OF PROVIDED CODE
+
+# START OF ORIGINAL CODE
+
+# Our test set will be 20% of remaining edx set
+test_index <- createDataPartition(y = edx$rating, times = 1, p = 0.2, list = FALSE)
+
+# We split train and test sets from edx set along test index
+train_set <- edx[-test_index,]
+test_set <- edx[test_index,]
+
+# Ensure userId and movieId in test set are also in train set
+test_set <- test_set %>% 
+     semi_join(train_set, by = "movieId") %>%
+     semi_join(train_set, by = "userId")
+
+rm(dl, ratings, movies, test_index, temp, movielens, removed)
+
+# Define function to calculate Root Mean Square Error
+RMSE <- function(true_ratings, predicted_ratings){
+     sqrt(mean((true_ratings - predicted_ratings)^2))}
+
+# Begin process of regularization by using cross-validation to find the tuning parameter (Lambda) that provides the lowest RMSE
+# We will accomplish this by testing a series of possible Lambdas
+tuning_params <- seq(0, 10, 0.25)
+test_errors <- sapply(tuning_params, function(l){
+   
+   # First we find the overall average rating for all movies (mu)
+   mu <- mean(train_set$rating)
+   
+   # Next we use our regularization equation to find average movie ratings (b_i)
+   regularized_movie_avgs <- train_set %>% 
+     group_by(movieId) %>% 
+     summarize(b_i = sum(rating - mu)/(n()+l))
+   
+   # Again we use our regularization equation to find the user-specific effect (b_u)
+   regularized_user_avgs <- train_set %>% 
+     left_join(regularized_movie_avgs, by='movieId') %>%
+     group_by(userId) %>%
+     summarize(b_u = sum(rating - b_i - mu)/(n()+l))
+
+   # Finally we will use these calculated values to form our predicted ratings
+   predicted_ratings <- test_set %>% 
+     left_join(regularized_movie_avgs, by='movieId') %>%
+     left_join(regularized_user_avgs, by='userId') %>%
+     mutate(pred = mu + b_i + b_u) %>%
+     .$pred
+   
+   # We now test each prediction against the test set and return all calculated RMSE values
+   return(RMSE(predicted_ratings, test_set$rating))
+})
+
+# Checking the calculated RMSEs, we select the tuning parameter which resulted in the lowest RMSE value and assign it to Lambda
+lambda <- tuning_params[which.min(test_errors)]
+
+# Now that we have selected the appropriate tuning parameter to regularize our prediction, we can repeat the process on our edx set and compare it against the hold-out validation set
+mu <- mean(edx$rating)
+
+regularized_movie_avgs <- edx %>% 
+     group_by(movieId) %>% 
+     summarize(b_i = sum(rating - mu)/(n()+lambda))
+
+regularized_user_avgs <- edx %>% 
+     left_join(regularized_movie_avgs, by='movieId') %>%
+     group_by(userId) %>%
+     summarize(b_u = sum(rating - b_i - mu)/(n()+lambda))
+
+predicted_ratings <- validation %>% 
+     left_join(regularized_movie_avgs, by='movieId') %>%
+     left_join(regularized_user_avgs, by='userId') %>%
+     mutate(pred = mu + b_i + b_u) %>%
+     .$pred
+
+#We now calculate the final RMSE of our model using our predicted value from the edx set and the final validation set
+model_rmse <- RMSE(predicted_ratings, validation$rating)
+```
+
+## Introduction
+
+MovieLens.org is a website created by GroupLens Research containing over 25 million ratings for thouands of movies by a multitude of online users. Using a subset of this data, this project aims to utilize these ratings in order to form a movie recommendation algorithm that will help users find similar movies to ones they enjoy. In creating this algorithm, we will calculate the average movie rating overall, the average rating per movie, average rating per user, and then factor in a penalty for small sample size. Combining these calculations we will form a list of predicted movie ratings, which we will test by comparing to a validating set of real ratings.
+
+## Method
+
+This analysis begins by installing any required packages that the user is missing, then downloading a 10 million-entry subset of MovieLens's online database. Delimiters are then removed from the data and it is organized into separate tables by rating and movie, which are then converted into data frames and merged. This constitutes the primary data to be analyzed. Ten percent of this data is then set aside as our final validation set, and the remaining data is split again to form test (20%) and training (80%) sets. To form our predictive model, we consider the individual ratings themselves $y_{u,i}$, the overall average rating $\mu$, per-movie average ratings $b_{i}$, and per-user average ratings $b_{u}$ in our training set. Using these observations and calculations, we can predict ratings using the following equation:
+$$Y_{u, i} = \mu + b_i + b_u$$
+To improve our prediction, we will regularize our data to account for small sample sizes with the following equation:
+$$\frac{1}{N}\sum_{u, i}(y_{u, i}-\mu-b_i-b_u)^2 + \lambda(\sum_i b_{i}^2 + \sum_u b_{u}^2)$$
+
+$\lambda$ is a tuning parameter, so we use cross-validation to select the $\lambda$ which results in the lowest RMSE. We do this by testing a sequence of possible parameters in the regularization equation, using the regularized data in the prediction equation, then finding the RMSE with each prediction compared to the test set. We use the following equation to calculate RMSE:
+$$\sqrt{ \frac{1}{N} \sum_{u, i} ( \hat{y}_{u, i} - y_{u, i} )^2}$$
+Once the ideal $\lambda$ is identified, we can apply the equation once more to the overall set and calculate the RMSE using the validation set.
+
+\newpage
+
+## Results
+
+The results of the cross-validation can be seen in the following graph:
+
+```{r Cross-Valitation, echo=FALSE, fig.align="left"}
+plot(tuning_params,test_errors,xlab = "Lambda",ylab = "RMSE")
+```
+We can locate the $\lambda$ resulting in the lowest RMSE using the following code:
+```{r Lambda}
+tuning_params[which.min(test_errors)]
+```
+After running the final regularization and prediction equations with the ideal $\lambda$, we can calculate our RMSE using the validation set:
+```{r Final RMSE}
+RMSE(predicted_ratings, validation$rating)
+```
+
+## Conclusion
+
+Using MovieLens's extensive review database, we have identified and accounted for several interfering factors and created a fairly effective movie rating prediction algorithm. Further iterations should include more corrections for additional effects as they are discovered and studied.
