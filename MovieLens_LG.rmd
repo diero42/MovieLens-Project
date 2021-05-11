@@ -1,14 +1,12 @@
 ---
 title: "MovieLens Recommendation System"
 author: "Loren Grooms"
-date: "01/07/2020"
+date: "03/15/2021"
 output: pdf_document
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-
-#START OF PROVIDED CODE
 
 if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
 if(!require(caret)) install.packages("caret", repos = "http://cran.us.r-project.org")
@@ -17,99 +15,221 @@ if(!require(data.table)) install.packages("data.table", repos = "http://cran.us.
 library(tidyverse)
 library(caret)
 library(data.table)
+```
 
-# MovieLens 10M dataset:
-# https://grouplens.org/datasets/movielens/10m/
-# http://files.grouplens.org/datasets/movielens/ml-10m.zip
+# Introduction
 
+MovieLens.org is a website created by GroupLens Research containing over 25 million ratings for thousands of movies by a multitude of online users. While this wealth of opinion data is certainly useful, a large database of raw information may not be of immediate use to the average user. How can we present this data to users in a simple, actionable manner? Using a subset of the MovieLens dataset, this project aims to form a movie recommendation algorithm that will help users find similar movies to ones they enjoy. To create this algorithm, we will explore the data, find factors that influence a movie's rating, and adjust our method accordingly. Once we have developed a suitable model, we will test its accuracy and analyze strategies for further fine-tuning.
+
+# Method
+
+## 1 - Data Inspection & Cleaning
+
+We will begin our analysis by first downloading and inspecting a 10 million-entry subset of MovieLens's online database from [the GroupLens website](http://files.grouplens.org/datasets/movielens/ml-10m.zip). This zipped folder contains a **README.html** file to get us started, which lets us know the format for the data tables included in the folder.
+
+**ratings.dat** - UserID::MovieID::Rating::Timestamp \newline
+**movies.dat** - MovieID::Title::Genres \newline
+**tags.dat** - UserID::MovieID::Tag::Timestamp
+
+For this analysis we will be using **ratings.dat** and **movies.dat**, so we'll download the zipped folder using R then extract, clean, and label the data. \newpage
+
+```{r Download}
+# Download and store zipped file.
 dl <- tempfile()
 download.file("http://files.grouplens.org/datasets/movielens/ml-10m.zip", dl)
 
+# Remove delimiters and label columns appropriately.
 ratings <- fread(text = gsub("::", "\t", readLines(unzip(dl, "ml-10M100K/ratings.dat"))),
                  col.names = c("userId", "movieId", "rating", "timestamp"))
 
+# Remove delimiters using a utility for processing strings, label
+# columns appropriately.
 movies <- str_split_fixed(readLines(unzip(dl, "ml-10M100K/movies.dat")), "\\::", 3)
 colnames(movies) <- c("movieId", "title", "genres")
+tags <- str_split_fixed(readLines(unzip(dl, "ml-10M100K/tags.dat")), "\\::", 4)
+colnames(tags) <- c("userId", "movieId", "tag", "timestamp")
 
-# if using R 4.0 or later:
+# Convert to data frames after converting strings to appropriate data types.
 movies <- as.data.frame(movies) %>% mutate(movieId = as.numeric(movieId),
                                             title = as.character(title),
                                             genres = as.character(genres))
+tags <- as.data.frame(tags) %>% mutate(userId = as.numeric(userId),
+                                            movieId = as.numeric(movieId),
+                                            tag = as.character(tag),
+                                             timestamp = as.numeric(timestamp)) %>%
+                                             select(tag,timestamp)
+
+# Join tables into primary dataset.
+movielens <- left_join(ratings, tags, by = "timestamp")
+movielens <- left_join(movielens, movies, by = "movieId")
+```
+\newpage
+```{r Inspect, echo=FALSE}
+movielens[with(movielens,order(tag))] %>% head()
+```
+
+## \newline
+##
+
+```{r Inspect2,echo=FALSE}
+cat("Rows: ",nrow(movielens))
+cat("Columns: ",ncol(movielens))
+```
+
+Our data is now readable and easily usable within R. \newpage
 
 
-movielens <- left_join(ratings, movies, by = "movieId")
 
-# Validation set will be 10% of MovieLens data
-set.seed(1, sample.kind="Rounding") # if using R 3.5 or earlier, use `set.seed(1)`
+## 2 - Data Exploration, Visualization, and Interpretation
+
+We will now explore our dataset further by visualizing the relationships with graphs. These visuals will indicate which variables are affecting the overall rating so we can account for them to achieve a more accurate final rating.
+
+```{r Graph1,echo=FALSE,out.width="85%"}
+movielens %>% group_by(rating) %>% summarize(count = n()) %>% ggplot(aes(rating,count)) + geom_line() + labs(title = "Fig1", x = "Star Rating", y = "Count")
+```
+```{r Graph2,echo=FALSE,out.width="85%"}
+movielens %>% count(movieId) %>% ggplot(aes(n)) + geom_histogram(bins = 30, color = "black") + labs(title = "Fig2", x = "Ratings per Movie", y = "Count")
+```
+```{r Graph3,echo=FALSE,out.width="85%"}
+movielens %>% count(userId) %>% ggplot(aes(n)) + geom_histogram(bins = 30, color = "black") + labs(title = "Fig3", x = "Ratings per User", y = "Count")
+```
+```{r Graph4,echo=FALSE,message=FALSE,out.width="85%"}
+tags <- table(movielens$tag) %>% as.data.frame() %>% arrange(desc(Freq))
+tags %>% arrange(desc(Freq)) %>% top_n(10) %>% ggplot(aes(x = reorder(Var1, -Freq),y = Freq)) + geom_bar(stat="identity",color = "black") + labs(title = "Fig4", x = "Unique Tags", y = "Count") + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+```
+\newpage
+From these graphs, we can observe the following:
+
+**Fig1** - 3- and 4-star ratings are far more common than any others; half-star ratings are far less common than full-star.\newline
+**Fig2** - Most movies have no rating, and many only a few. The most-rated movie was rated ~1500 times, with the next most-rated having less than half that. \newline
+**Fig3** - Most users have not submitted a rating, and many only a few. There appears to be one prolific user with over 15,000 reviews, with the next user having submitted less than one third of that.\newline
+**Fig4** - Tags do not seem to form a consistent pattern. Of the 10 most frequently used tags shown in the graph, even the top tag is only used a little over 20 times total. Additionally, tags do not necessarily relate directly to rating, so we will not be taking tags into account at this time.
+
+We can see that overall ratings, per-movie ratings, and per-user ratings are the major influencers on our data, so we will take them into account when crafting our initial predictive model. \newpage
+
+## 3 - Data Preparation
+
+We will now separate our data into several sets:
+
+**Validation** - Used at the very end to test the effectiveness our overall algorithm. \newline
+**Test** - Used within the algorithm to test the effectiveness of its components. \newline
+**Training** - Our core data, used as the input to the components of our algorithm.
+
+We want our Validation and Test sets to be 10% of their greater datasets so we can use them to confirm our results reliably without removing too much of the core training data.
+
+##
+
+```{r Sets, message=FALSE, warning=FALSE}
+# Validation set will be 10% of MovieLens data, split by rating.
+set.seed(1, sample.kind="Rounding")
 test_index <- createDataPartition(y = movielens$rating, times = 1, p = 0.1, list = FALSE)
 edx <- movielens[-test_index,]
 temp <- movielens[test_index,]
 
-# Make sure userId and movieId in validation set are also in edx set
+# Keep only rows which have corresponding rows in edx set.
 validation <- temp %>% 
       semi_join(edx, by = "movieId") %>%
       semi_join(edx, by = "userId")
 
-# Add rows removed from validation set back into edx set
+# Add rows that didn't have a corresponding edx row back into edx set.
 removed <- anti_join(temp, validation)
 edx <- rbind(edx, removed)
 
-# END OF PROVIDED CODE
-
-# START OF ORIGINAL CODE
-
-# Our test set will be 20% of remaining edx set
-test_index <- createDataPartition(y = edx$rating, times = 1, p = 0.2, list = FALSE)
-
-# We split train and test sets from edx set along test index
+# Test set will be 10% of remaining edx set, split by rating.
+test_index <- createDataPartition(y = edx$rating, times = 1, p = 0.1, list = FALSE)
 train_set <- edx[-test_index,]
 test_set <- edx[test_index,]
 
-# Ensure userId and movieId in test set are also in train set
+# Keep only rows which have corresponding rows in training set.
 test_set <- test_set %>% 
      semi_join(train_set, by = "movieId") %>%
      semi_join(train_set, by = "userId")
 
-rm(dl, ratings, movies, test_index, temp, movielens, removed)
+# Remove unnecessary variables.
+rm(dl, ratings, movies, tags, test_index, temp, movielens, removed)
+```
+\newpage
 
-# Define function to calculate Root Mean Square Error
+## 4 - Predictive Model Formation
+
+Our first, most basic predictive model consists of finding the average of each factor and simply adding them together using the following equation:
+
+$$Y_{u, i} = \mu + b_i + b_u$$
+**$y_{u,i}$** = Predicted rating for movie *i* from user *u*. \newline
+**$\mu$** = Overall average rating for all movies. \newline
+**$b_{i}$** = Average rating for movie *i*. \newline
+**$b_{u}$** = Average rating from user *u*.
+
+This is a good start and addresses our main variables, but is not very nuanced and will likely not yeild a very accurate result on its own.
+
+To improve our prediction, we will look at an additional variable our visuals revealed: **sample size**. As we saw previously, the majority of movies and users have low to no reviews, so we want to give more value to large sample sizes and lesser value to small ones. We will accomplish this by **regularizing** our data, which uses the following equation:
+$$\frac{1}{N}\sum_{u, i}(y_{u, i}-\mu-b_i-b_u)^2 + \lambda(\sum_i b_{i}^2 + \sum_u b_{u}^2)$$
+Here, $\lambda$ is a tuning parameter we can use to adjust our model parametrically, so we will use cross-validation to select the $\lambda$ which results in the most accurate result. We will do this by testing a sequence of possible $\lambda$s in our regularization equation, plugging that regularized data into the prediction equation, then testing the accuracy of each prediction compared to the test set. To test the accuracy, we will calculate the Root Mean Square Error using the following equation:
+$$\sqrt{ \frac{1}{N} \sum_{u, i} ( \hat{y}_{u, i} - y_{u, i} )^2}$$
+\newpage
+```{r more}
+
+# Define function to calculate Root Mean Square Error.
 RMSE <- function(true_ratings, predicted_ratings){
      sqrt(mean((true_ratings - predicted_ratings)^2))}
 
-# Begin process of regularization by using cross-validation to find the tuning parameter (Lambda) that provides the lowest RMSE
-# We will accomplish this by testing a series of possible Lambdas
+# Begin process of regularization by using cross-validation to find the tuning
+# parameter (Lambda) that provides the lowest RMSE.
+# We will accomplish this by testing a series of possible Lambdas.
 tuning_params <- seq(0, 10, 0.25)
 test_errors <- sapply(tuning_params, function(l){
    
-   # First we find the overall average rating for all movies (mu)
+   # First we find the overall average rating for all movies (mu).
    mu <- mean(train_set$rating)
    
-   # Next we use our regularization equation to find average movie ratings (b_i)
+   # Next we use our regularization equation to find average movie
+   # ratings (b_i).
    regularized_movie_avgs <- train_set %>% 
      group_by(movieId) %>% 
      summarize(b_i = sum(rating - mu)/(n()+l))
    
-   # Again we use our regularization equation to find the user-specific effect (b_u)
+   # Again we use our regularization equation to find the user-specific
+   # effect (b_u).
    regularized_user_avgs <- train_set %>% 
      left_join(regularized_movie_avgs, by='movieId') %>%
      group_by(userId) %>%
      summarize(b_u = sum(rating - b_i - mu)/(n()+l))
 
-   # Finally we will use these calculated values to form our predicted ratings
+   # Finally we will use these calculated values to form our predicted ratings.
    predicted_ratings <- test_set %>% 
      left_join(regularized_movie_avgs, by='movieId') %>%
      left_join(regularized_user_avgs, by='userId') %>%
      mutate(pred = mu + b_i + b_u) %>%
      .$pred
    
-   # We now test each prediction against the test set and return all calculated RMSE values
+   # We now test each prediction against the test set and return all calculated
+   # RMSE values.
    return(RMSE(predicted_ratings, test_set$rating))
 })
 
-# Checking the calculated RMSEs, we select the tuning parameter which resulted in the lowest RMSE value and assign it to Lambda
+# Checking the calculated RMSEs, we select the tuning parameter which resulted
+# in the lowest RMSE value and assign it to Lambda.
 lambda <- tuning_params[which.min(test_errors)]
+```
+\newpage
+The results of the cross-validation can be seen in the following graph:
 
-# Now that we have selected the appropriate tuning parameter to regularize our prediction, we can repeat the process on our edx set and compare it against the hold-out validation set
+```{r Cross-Valitation, echo=FALSE, fig.align="left"}
+plot(tuning_params,test_errors,xlab = "Lambda",ylab = "RMSE")
+```
+
+This indicates that our ideal $\lambda$ resides between 4 and 6, and we can retrieve its exact value with the following code:
+
+```{r Lambda}
+tuning_params[which.min(test_errors)]
+```
+
+Now that we have identified the ideal $\lambda$, we can apply it to the equation,  to the overall set using  and calculate the RMSE using the validation set.
+\newpage
+```{r final}
+# Now that we have selected the appropriate tuning parameter to regularize
+# our prediction, we can repeat the process on our edx set and compare it
+# against the hold-out validation set.
 mu <- mean(edx$rating)
 
 regularized_movie_avgs <- edx %>% 
@@ -127,43 +247,24 @@ predicted_ratings <- validation %>%
      mutate(pred = mu + b_i + b_u) %>%
      .$pred
 
-#We now calculate the final RMSE of our model using our predicted value from the edx set and the final validation set
+# We now calculate the final RMSE of our model using our predicted value
+# from the edx set and the final validation set.
 model_rmse <- RMSE(predicted_ratings, validation$rating)
 ```
-
-## Introduction
-
-MovieLens.org is a website created by GroupLens Research containing over 25 million ratings for thouands of movies by a multitude of online users. Using a subset of this data, this project aims to utilize these ratings in order to form a movie recommendation algorithm that will help users find similar movies to ones they enjoy. In creating this algorithm, we will calculate the average movie rating overall, the average rating per movie, average rating per user, and then factor in a penalty for small sample size. Combining these calculations we will form a list of predicted movie ratings, which we will test by comparing to a validating set of real ratings.
-
-## Method
-
-This analysis begins by installing any required packages that the user is missing, then downloading a 10 million-entry subset of MovieLens's online database. Delimiters are then removed from the data and it is organized into separate tables by rating and movie, which are then converted into data frames and merged. This constitutes the primary data to be analyzed. Ten percent of this data is then set aside as our final validation set, and the remaining data is split again to form test (20%) and training (80%) sets. To form our predictive model, we consider the individual ratings themselves $y_{u,i}$, the overall average rating $\mu$, per-movie average ratings $b_{i}$, and per-user average ratings $b_{u}$ in our training set. Using these observations and calculations, we can predict ratings using the following equation:
-$$Y_{u, i} = \mu + b_i + b_u$$
-To improve our prediction, we will regularize our data to account for small sample sizes with the following equation:
-$$\frac{1}{N}\sum_{u, i}(y_{u, i}-\mu-b_i-b_u)^2 + \lambda(\sum_i b_{i}^2 + \sum_u b_{u}^2)$$
-
-$\lambda$ is a tuning parameter, so we use cross-validation to select the $\lambda$ which results in the lowest RMSE. We do this by testing a sequence of possible parameters in the regularization equation, using the regularized data in the prediction equation, then finding the RMSE with each prediction compared to the test set. We use the following equation to calculate RMSE:
-$$\sqrt{ \frac{1}{N} \sum_{u, i} ( \hat{y}_{u, i} - y_{u, i} )^2}$$
-Once the ideal $\lambda$ is identified, we can apply the equation once more to the overall set and calculate the RMSE using the validation set.
 
 \newpage
 
 ## Results
 
-The results of the cross-validation can be seen in the following graph:
-
-```{r Cross-Valitation, echo=FALSE, fig.align="left"}
-plot(tuning_params,test_errors,xlab = "Lambda",ylab = "RMSE")
-```
-We can locate the $\lambda$ resulting in the lowest RMSE using the following code:
-```{r Lambda}
-tuning_params[which.min(test_errors)]
-```
 After running the final regularization and prediction equations with the ideal $\lambda$, we can calculate our RMSE using the validation set:
-```{r Final RMSE}
+
+```{r Final RMSE,echo=FALSE}
 RMSE(predicted_ratings, validation$rating)
 ```
 
+This tells us that when we apply the predictive model we formed here to the MovieLens data, it predicts an incorrect result **86.5%** of the time.
+
+
 ## Conclusion
 
-Using MovieLens's extensive review database, we have identified and accounted for several interfering factors and created a fairly effective movie rating prediction algorithm. Further iterations should include more corrections for additional effects as they are discovered and studied.
+Our results may not seem that impressive when aiming for an idealized 0% error result, but considering that we took only 4 general variables into account, this is quite an impressive outcome. We have observed patterns in our data and accounted for them to the degree that we have a greater chance at prediction than blind guessing, which is a major step in the right direction. To improve our model in the future, we need to analyze more data to uncover other affecting factors, such as user activity level, movie popularity, or release year. We can also utilize the additional data to discover new meaning in our existing data, such as patterns or relations in our Tags dataset. Once further variables and congruences are identified, we can look to various machine learning algorithms and formulas to create appropriate applications and further develop our model.
