@@ -1,7 +1,7 @@
 ---
 title: "MovieLens Recommendation System"
 author: "Loren Grooms"
-date: "03/15/2021"
+date: "05/14/2021"
 output: pdf_document
 ---
 
@@ -168,7 +168,6 @@ Here, $\lambda$ is a tuning parameter we can use to adjust our model parametrica
 $$\sqrt{ \frac{1}{N} \sum_{u, i} ( \hat{y}_{u, i} - y_{u, i} )^2}$$
 \newpage
 ```{r more}
-
 # Define function to calculate Root Mean Square Error.
 RMSE <- function(true_ratings, predicted_ratings){
      sqrt(mean((true_ratings - predicted_ratings)^2))}
@@ -259,7 +258,7 @@ model_rmse <- RMSE(predicted_ratings, validation$rating)
 After running the final regularization and prediction equations with the ideal $\lambda$, we can calculate our RMSE using the validation set:
 
 ```{r Final RMSE,echo=FALSE}
-RMSE(predicted_ratings, validation$rating)
+cat(model_rmse)
 ```
 
 This tells us that when we apply the predictive model we formed here to the MovieLens data, it predicts an incorrect result **86.5%** of the time.
