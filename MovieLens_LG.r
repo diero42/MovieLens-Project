@@ -34,8 +34,8 @@ movies <- as.data.frame(movies) %>% mutate(movieId = as.numeric(movieId),
 tags <- as.data.frame(tags) %>% mutate(userId = as.numeric(userId),
                                        movieId = as.numeric(movieId),
                                        tag = as.character(tag),
-                                       timestamp = as.numeric(timestamp)) %>%
-  select(tag,timestamp)
+                                       timestamp = as.numeric(timestamp)) %>% 
+                                       select(tag,timestamp)
 
 # Join tables into primary dataset.
 movielens <- left_join(ratings, tags, by = "timestamp")
