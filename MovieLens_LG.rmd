@@ -261,9 +261,9 @@ After running the final regularization and prediction equations with the ideal $
 cat(model_rmse)
 ```
 
-This tells us that when we apply the predictive model we formed here to the MovieLens data, it predicts an incorrect result **86.5%** of the time.
+This tells us that when we apply the predictive model we formed here to the MovieLens data, its predictions are off by an average of **0.86505** stars.
 
 
 ## Conclusion
 
-Our results may not seem that impressive when aiming for an idealized 0% error result, but considering that we took only 4 general variables into account, this is quite an impressive outcome. We have observed patterns in our data and accounted for them to the degree that we have a greater chance at prediction than blind guessing, which is a major step in the right direction. To improve our model in the future, we need to analyze more data to uncover other affecting factors, such as user activity level, movie popularity, or release year. We can also utilize the additional data to discover new meaning in our existing data, such as patterns or relations in our Tags dataset. Once further variables and congruences are identified, we can look to various machine learning algorithms and formulas to create appropriate applications and further develop our model.
+Our results may not seem that impressive when aiming for an idealized 0 star error result, but considering that we took only 4 general variables into account, this is quite a notable outcome. We have observed patterns in our data and accounted for them to the degree that we have a greater chance at prediction than blind guessing, which is a major step in the right direction. To improve our model in the future, we need to analyze more data to uncover other affecting factors, such as user activity level, movie popularity, or release year. We can also utilize the additional data to discover new meaning in our existing data, such as patterns or relations in our Tags dataset. Once further variables and congruences are identified, we can look to various machine learning algorithms and formulas to create appropriate applications and further develop our model.
